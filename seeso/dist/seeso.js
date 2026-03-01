@@ -8185,10 +8185,10 @@ __webpack_require__.r(__webpack_exports__);
       /* UAParser.js v2.0.0-beta.2
          Copyright © 2012-2023 Faisal Salman <f@faisalman.com>
          AGPLv3 License */ /*
-                        Detect Browser, Engine, OS, CPU, and Device type/model from User-Agent data.
-                        Supports browser & node.js environment. 
-                        Demo   : https://faisalman.github.io/ua-parser-js
-                        Source : https://github.com/faisalman/ua-parser-js */
+                     Detect Browser, Engine, OS, CPU, and Device type/model from User-Agent data.
+                     Supports browser & node.js environment. 
+                     Demo   : https://faisalman.github.io/ua-parser-js
+                     Source : https://github.com/faisalman/ua-parser-js */
       /////////////////////////////////////////////////////////////////////////////////
 
       /* jshint esversion: 6 */
@@ -10974,12 +10974,18 @@ var __nested_webpack_exports__ = {};
       value: function convertBitmapToBlob_(bitmap) {
         if (!this.canvas) {
           this.canvas = document.createElement('canvas');
+          this._cvW = 0;
+          this._cvH = 0;
         }
         if (!this.preview) {
           this.preview = document.getElementById('preview'); //document.getElementById('preview');
         }
-        this.canvas.width = bitmap.width;
-        this.canvas.height = bitmap.height;
+        if (this._cvW !== bitmap.width || this._cvH !== bitmap.height) {
+          this.canvas.width = bitmap.width;
+          this.canvas.height = bitmap.height;
+          this._cvW = bitmap.width;
+          this._cvH = bitmap.height;
+        }
         var ctx = this.canvas.getContext('2d', {
           willReadFrequently: true
         });
