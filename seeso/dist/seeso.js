@@ -8222,10 +8222,10 @@ __webpack_require__.r(__webpack_exports__);
       /* UAParser.js v2.0.0-beta.2
          Copyright © 2012-2023 Faisal Salman <f@faisalman.com>
          AGPLv3 License */ /*
-               Detect Browser, Engine, OS, CPU, and Device type/model from User-Agent data.
-               Supports browser & node.js environment. 
-               Demo   : https://faisalman.github.io/ua-parser-js
-               Source : https://github.com/faisalman/ua-parser-js */
+            Detect Browser, Engine, OS, CPU, and Device type/model from User-Agent data.
+            Supports browser & node.js environment. 
+            Demo   : https://faisalman.github.io/ua-parser-js
+            Source : https://github.com/faisalman/ua-parser-js */
       /////////////////////////////////////////////////////////////////////////////////
 
       /* jshint esversion: 6 */
@@ -11045,6 +11045,43 @@ var __nested_webpack_exports__ = {};
             }
           }
         }
+        // ── WebGL zero-allocation path (iOS crash fix) ──
+        var w = bitmap.width, h = bitmap.height;
+        if (!this._cvGlReady || this._cvGlW !== w || this._cvGlH !== h) {
+          try {
+            var c = document.createElement('canvas'); c.width = w; c.height = h;
+            var gl = c.getContext('webgl', { antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true });
+            if (gl) {
+              var tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+              var fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+              var pixBuf = new Uint8Array(w * h * 4);
+              var flipped = new Uint8ClampedArray(w * h * 4);
+              this._cvGl = gl; this._cvGlTex = tex; this._cvGlFb = fb;
+              this._cvGlPixBuf = pixBuf; this._cvGlFlipped = flipped;
+              this._cvGlImgData = new ImageData(flipped, w, h);
+              this._cvGlW = w; this._cvGlH = h; this._cvGlReady = true;
+            }
+          } catch (e) { this._cvGlReady = false; }
+        }
+        if (this._cvGlReady) {
+          var _gl = this._cvGl;
+          _gl.bindTexture(_gl.TEXTURE_2D, this._cvGlTex);
+          _gl.texImage2D(_gl.TEXTURE_2D, 0, _gl.RGBA, _gl.RGBA, _gl.UNSIGNED_BYTE, this.canvas);
+          _gl.bindFramebuffer(_gl.FRAMEBUFFER, this._cvGlFb);
+          _gl.readPixels(0, 0, w, h, _gl.RGBA, _gl.UNSIGNED_BYTE, this._cvGlPixBuf);
+          var rowBytes = w * 4; var src = this._cvGlPixBuf; var dst = this._cvGlFlipped;
+          for (var y = 0; y < h; y++) {
+            var srcOff = (h - 1 - y) * rowBytes; var dstOff = y * rowBytes;
+            dst.set(src.subarray(srcOff, srcOff + rowBytes), dstOff);
+          }
+          return this._cvGlImgData;
+        }
+        // ── Fallback: 2d canvas (non-iOS or WebGL unavailable) ──
         return ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
       }
 
