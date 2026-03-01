@@ -5,9 +5,25 @@ import { loadWebpackModule } from "./webpack-loader.js";
 // ═══════════════════════════════════════════════════════════════════════════════
 // §1. Configuration
 // ═══════════════════════════════════════════════════════════════════════════════
-const LICENSE_KEY = window.location.hostname === "selfso2014.github.io"
-    ? "prod_srdpyuuaumnsqoyk2pvdci0rg3ahsr923bshp32u"
-    : "dev_1ntzip9admm6g0upynw3gooycnecx0vl93hz8nox";
+// License keys — will try in order until one succeeds
+const LICENSE_KEYS = [
+    "dev_1ntzip9admm6g0upynw3gooycnecx0vl93hz8nox",
+    "prod_srdpyuuaumnsqoyk2pvdci0rg3ahsr923bshp32u",
+];
+
+const INIT_ERROR_NAMES = {
+    0: 'SUCCESS',
+    1: 'ERROR_INIT',
+    2: 'ERROR_CAMERA_PERMISSION',
+    3: 'AUTH_INVALID_KEY',
+    4: 'AUTH_INVALID_ENV_USED_DEV_IN_PROD',
+    5: 'AUTH_INVALID_ENV_USED_PROD_IN_DEV',
+    6: 'AUTH_INVALID_PACKAGE_NAME',
+    7: 'AUTH_INVALID_APP_SIGNATURE',
+    8: 'AUTH_EXCEEDED_FREE_TIER',
+    9: 'AUTH_DEACTIVATED_KEY',
+    16: 'AUTH_EXPIRED_KEY',
+};
 
 const CONFIG = {
     MAX_CAM_WIDTH: 480,       // iOS 메모리 보호: 프레임당 1.2MB로 제한
@@ -427,27 +443,56 @@ async function initSDK() {
         const SeesoClass = _SDK?.default || _SDK?.Seeso || _SDK;
         if (!SeesoClass) throw new Error('Seeso export not found');
 
-        _seeso = new SeesoClass();
-        _rawSeeso = _seeso;
-        window.__seeso = _seeso;
-
         logI('sdk', `Module loaded. Keys: ${Object.keys(_SDK || {}).join(', ')}`);
+        logI('sdk', `Domain: ${window.location.hostname}`);
         setPill(els.pillSdk, 'SDK: loaded', 'warn');
 
-        setStatus('Initializing SDK...');
-        const errCode = await _seeso.initialize(LICENSE_KEY);
-        logI('sdk', `initialize() returned: ${errCode}`);
+        // ╔════════════════════════════════════════════════════════════════╗
+        // ║  Try each license key in order until one succeeds             ║
+        // ╚════════════════════════════════════════════════════════════════╝
+        let lastErr = -1;
+        for (let i = 0; i < LICENSE_KEYS.length; i++) {
+            const key = LICENSE_KEYS[i];
+            const keyLabel = key.substring(0, 8) + '...';
+            setStatus(`Trying license key ${i + 1}/${LICENSE_KEYS.length}...`);
+            logI('sdk', `Attempting key ${i + 1}/${LICENSE_KEYS.length}: ${keyLabel}`);
 
-        if (errCode !== 0) {
-            const errName = _SDK?.InitializationErrorType
-                ? Object.entries(_SDK.InitializationErrorType).find(([, v]) => v === errCode)?.[0]
-                : String(errCode);
-            throw new Error(`Init failed: ${errName} (code ${errCode})`);
+            // Create fresh instance for each attempt (singleton reset)
+            _seeso = new SeesoClass();
+            _rawSeeso = _seeso;
+            window.__seeso = _seeso;
+
+            try {
+                // UserStatusOption required by SeeSo SDK v2.5.2
+                const userStatusOption = _SDK?.UserStatusOption
+                    ? new _SDK.UserStatusOption(true, true, true)
+                    : { useAttention: true, useBlink: true, useDrowsiness: true };
+
+                const errCode = await _seeso.initialize(key, userStatusOption);
+                const errName = INIT_ERROR_NAMES[errCode] || `UNKNOWN_${errCode}`;
+                logI('sdk', `Key ${keyLabel} → ${errName} (code ${errCode})`);
+
+                if (errCode === 0) {
+                    setPill(els.pillSdk, 'SDK: ready', 'ok');
+                    logI('sdk', `✅ SDK initialized with key ${keyLabel}`);
+                    return true;
+                }
+
+                lastErr = errCode;
+                logW('sdk', `Key ${keyLabel} failed: ${errName}`);
+
+                // Clean up failed instance for next attempt
+                try { _seeso.deinitialize?.(); } catch (_) { }
+                await new Promise(r => setTimeout(r, 500));
+            } catch (e) {
+                logW('sdk', `Key ${keyLabel} threw: ${e.message}`);
+                lastErr = -1;
+            }
         }
 
-        setPill(els.pillSdk, 'SDK: ready', 'ok');
-        logI('sdk', 'SDK initialized successfully');
-        return true;
+        // All keys failed
+        const finalErr = INIT_ERROR_NAMES[lastErr] || `UNKNOWN_${lastErr}`;
+        throw new Error(`All ${LICENSE_KEYS.length} keys failed. Last: ${finalErr} (code ${lastErr})`);
 
     } catch (e) {
         setPill(els.pillSdk, 'SDK: error', 'error');
