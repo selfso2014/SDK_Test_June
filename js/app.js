@@ -29,7 +29,7 @@ const CONFIG = {
     MAX_CAM_HEIGHT: 640,
     TARGET_FPS: 30,
     RENDER_INTERVAL_MS: 33.3, // 30fps cap
-    CAL_POINTS: 5,            // 캘리브레이션 포인트 수
+    CAL_POINTS: 1,            // 캘리브레이션 포인트 수 (1-point: 빠른 시작)
     CAL_CRITERIA: 0,          // 0=Low, 1=Medium, 2=High
     LOG_MAX: 800,
     CRASH_SAVE_INTERVAL_MS: 500,

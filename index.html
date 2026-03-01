@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="description" content="SeeSo Eye Tracking Demo with iOS crash prevention — GPU memory leak fix, Canvas backing store optimization">
+  <meta name="description"
+    content="SeeSo Eye Tracking Demo with iOS crash prevention — GPU memory leak fix, Canvas backing store optimization">
   <title>SeeSo Eye Tracking — iOS Safe</title>
   <link rel="stylesheet" href="css/style.css">
   <!-- Cross-Origin Isolation for WASM Threads -->
   <script src="coi-serviceworker.js"></script>
 </head>
+
 <body>
 
   <!-- ═══ Fullscreen Gaze Canvas ═══ -->
@@ -21,6 +24,10 @@
       iOS crash-safe eye tracking powered by SeeSo SDK v2.5.2.<br>
       Canvas backing store leak patched. GPU memory pinned.
     </p>
+    <div style="font-size:12px; opacity:0.6; margin:8px 0;">
+      <strong>Version:</strong> 1.1.0 &nbsp;|&nbsp;
+      <strong>Build:</strong> 2026-03-01 20:38 KST
+    </div>
     <button id="btnStart">Start Eye Tracking</button>
     <p style="font-size:11px; margin-top:12px; opacity:0.4;">
       Camera permission required. All processing is on-device.
@@ -67,4 +74,5 @@
   <!-- ═══ App Script ═══ -->
   <script type="module" src="js/app.js"></script>
 </body>
+
 </html>
