@@ -263,95 +263,90 @@ function patchGrabFrameAsImageData(rawSeeso) {
         setTimeout(() => patchGrabFrameAsImageData(rawSeeso), 100);
         return;
     }
-    if (ic.__patchedV1) return;
-    ic.__patchedV1 = true;
+    if (ic.__patchedV3) return;
+    ic.__patchedV3 = true;
 
     const track = rawSeeso.track || ic._videoStreamTrack;
 
-    // ── Safari/iOS: 비디오 풀 기반 패치 ──
-    if (IS_SAFARI) {
-        const entry = _getOrCreateVideoEntry(track);
-        if (entry && track) {
-            entry.video.srcObject = new MediaStream([track]);
-            entry.video.play().catch(() => { });
+    // ══════════════════════════════════════════════════════════════════════
+    // iOS/Safari + Desktop 공통: 제로-할당 패치 v3
+    //
+    // 핵심 원칙:
+    //   1. 매 프레임 new Promise() 생성 금지 → Promise.resolve() 사용
+    //   2. getImageData() 결과를 즉시 사전 할당 버퍼에 복사 후 null 처리
+    //   3. MediaStream 반복 생성 금지
+    //   4. Canvas/Context 1회만 생성
+    // ══════════════════════════════════════════════════════════════════════
+
+    // 사전 할당 리소스
+    let _video = null;
+    let _canvas = null;
+    let _ctx = null;
+    let _reuseBuffer = null;
+    let _reuseImgData = null;
+    let _lastW = 0;
+    let _lastH = 0;
+    let _videoReady = false;
+
+    // 비디오 설정 (1회만)
+    if (IS_SAFARI && track) {
+        _video = document.createElement('video');
+        _video.setAttribute('playsinline', '');
+        _video.setAttribute('autoplay', '');
+        _video.muted = true;
+        _video.style.cssText = 'position:fixed;width:1px;height:1px;top:-2px;left:-2px;opacity:0.01;pointer-events:none;z-index:-1';
+        document.body.appendChild(_video);
+        _video.srcObject = new MediaStream([track]);
+        _video.play().catch(() => { });
+        _video.addEventListener('playing', () => { _videoReady = true; });
+        if (_video.readyState >= 2) _videoReady = true;
+    } else {
+        // Desktop: SDK 내장 비디오 사용
+        _video = ic.videoElement;
+        _videoReady = true;
+    }
+
+    ic.grabFrameAsImageData = function patchedGrabFrame_v3() {
+        // 트랙 상태 확인
+        const currentTrack = rawSeeso.track || ic._videoStreamTrack;
+        if (!currentTrack || currentTrack.readyState !== 'live') {
+            return Promise.reject(new DOMException('Track not live', 'InvalidStateError'));
         }
 
-        ic.grabFrameAsImageData = function patchedGrabFrameAsImageData() {
+        // 비디오 준비 대기 (최초 몇 프레임만 — 이 경우만 Promise 사용)
+        if (!_videoReady || !_video || _video.readyState < 2 || _video.videoWidth === 0) {
             return new Promise((resolve, reject) => {
-                const currentTrack = rawSeeso.track;
-                if (!currentTrack || currentTrack.readyState !== 'live') {
-                    reject(new DOMException('Track not live', 'InvalidStateError'));
-                    return;
-                }
-
-                const ent = _getOrCreateVideoEntry(currentTrack);
-                if (!ent) { reject(new DOMException('No video entry')); return; }
-                const { video } = ent;
-
-                // 트랙 동기화
-                const existing = video.srcObject?.getVideoTracks?.() || [];
-                if (!existing.includes(currentTrack)) {
-                    video.srcObject = new MediaStream([currentTrack]);
-                    video.play().catch(() => { });
-                }
-
-                if (video.readyState < 2 || video.videoWidth === 0) {
-                    setTimeout(() => ic.grabFrameAsImageData().then(resolve).catch(reject), 30);
-                    return;
-                }
-
-                const w = video.videoWidth;
-                const h = video.videoHeight;
-
-                // ╔═══════════════════════════════════════════════════════════════╗
-                // ║  핵심 패치: Canvas 크기를 한 번만 설정 + willReadFrequently  ║
-                // ╚═══════════════════════════════════════════════════════════════╝
-                if (!ent.sizeSet || !ent.canvas || ent.canvas.width !== w || ent.canvas.height !== h) {
-                    ent.canvas = document.createElement('canvas');
-                    ent.canvas.width = w;
-                    ent.canvas.height = h;
-                    ent.ctx = ent.canvas.getContext('2d', { willReadFrequently: true });
-                    ent.sizeSet = true;
-                    logI('patch', `[iOS] Canvas pinned: ${w}×${h}, willReadFrequently=true`);
-                }
-
-                ent.ctx.drawImage(video, 0, 0);
-                const imageData = ent.ctx.getImageData(0, 0, w, h);
-                resolve(imageData);
+                setTimeout(() => ic.grabFrameAsImageData().then(resolve).catch(reject), 30);
             });
-        };
+        }
 
-        logI('patch', '[iOS] grabFrameAsImageData PATCHED — Canvas pinned + willReadFrequently');
+        const w = _video.videoWidth;
+        const h = _video.videoHeight;
 
-    } else {
-        // ── Chrome/Firefox: Canvas 고정 + willReadFrequently 만 적용 ──
-        const origVideo = ic.videoElement;
-        let pinnedCanvas = null;
-        let pinnedCtx = null;
+        // Canvas + 버퍼 초기화 (크기 변경 시에만 — 사실상 1회)
+        if (_lastW !== w || _lastH !== h) {
+            _canvas = document.createElement('canvas');
+            _canvas.width = w;
+            _canvas.height = h;
+            _ctx = _canvas.getContext('2d', { willReadFrequently: true });
+            _reuseBuffer = new Uint8ClampedArray(w * h * 4);
+            _reuseImgData = new ImageData(_reuseBuffer, w, h);
+            _lastW = w;
+            _lastH = h;
+            logI('patch', `[v3] Canvas pinned: ${w}×${h}, buffer=${(w * h * 4 / 1024).toFixed(0)}KB`);
+        }
 
-        ic.grabFrameAsImageData = function patchedDesktop() {
-            return new Promise((resolve, reject) => {
-                if (ic._videoStreamTrack?.readyState !== 'live') {
-                    reject(new DOMException('InvalidStateError'));
-                    return;
-                }
-                ic.videoElementPlaying.then(() => {
-                    const w = origVideo.videoWidth;
-                    const h = origVideo.videoHeight;
-                    if (!pinnedCanvas || pinnedCanvas.width !== w || pinnedCanvas.height !== h) {
-                        pinnedCanvas = document.createElement('canvas');
-                        pinnedCanvas.width = w;
-                        pinnedCanvas.height = h;
-                        pinnedCtx = pinnedCanvas.getContext('2d', { willReadFrequently: true });
-                    }
-                    pinnedCtx.drawImage(origVideo, 0, 0);
-                    resolve(pinnedCtx.getImageData(0, 0, w, h));
-                });
-            });
-        };
+        // 프레임 캡처: drawImage → getImageData → 즉시 복사 → 해제
+        _ctx.drawImage(_video, 0, 0);
+        var tmp = _ctx.getImageData(0, 0, w, h);
+        _reuseBuffer.set(tmp.data);
+        tmp = null; // GC 즉시 수거 가능
 
-        logI('patch', '[Desktop] grabFrameAsImageData PATCHED — Canvas pinned');
-    }
+        // Promise.resolve()로 반환 (매 프레임 할당 없음)
+        return Promise.resolve(_reuseImgData);
+    };
+
+    logI('patch', `[v3] grabFrameAsImageData PATCHED — zero-alloc (${IS_SAFARI ? 'Safari' : 'Desktop'})`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
