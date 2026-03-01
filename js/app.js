@@ -33,6 +33,7 @@ const CONFIG = {
     CAL_CRITERIA: 0,          // 0=Low, 1=Medium, 2=High
     LOG_MAX: 800,
     CRASH_SAVE_INTERVAL_MS: 500,
+    RESTART_INTERVAL_MS: 50000, // 50초마다 SDK 재시작 (iOS 메모리 누수 방지)
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -691,6 +692,145 @@ setInterval(() => {
 }, 2000);
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// §16. [iOS] Periodic SDK Restart — WASM/GPU 메모리 누수 완전 방지
+//
+//   원리:
+//   - getImageData()는 Web API 한계로 매 프레임 ~1.2MB 할당 (우회 불가)
+//   - iOS Safari GC가 30fps 할당 속도를 따라잡지 못해 ~80초 후 OOM Kill
+//   - 50초마다 SDK를 완전히 재시작하여 누적 메모리를 0으로 리셋
+//   - 캘리브레이션 데이터는 localStorage에서 복원 → 사용자 경험 유지
+// ═══════════════════════════════════════════════════════════════════════════════
+let _restartTimer = null;
+let _isRestarting = false;
+let _restartCount = 0;
+
+function scheduleRestart() {
+    if (_restartTimer) clearTimeout(_restartTimer);
+    _restartTimer = setTimeout(() => periodicRestart(), CONFIG.RESTART_INTERVAL_MS);
+    logI('restart', `Next restart in ${CONFIG.RESTART_INTERVAL_MS / 1000}s`);
+}
+
+function cancelRestart() {
+    if (_restartTimer) {
+        clearTimeout(_restartTimer);
+        _restartTimer = null;
+    }
+}
+
+async function periodicRestart() {
+    if (_isRestarting) return;
+    _isRestarting = true;
+    _restartCount++;
+
+    logI('restart', `═══ Periodic restart #${_restartCount} starting ═══`);
+    setStatus('Memory cleanup... (auto-restart)');
+
+    // ── 1. 트래킹 중지 ──
+    _trackingActive = false;
+    try {
+        if (_rawSeeso?.thread) { _rawSeeso.thread.stop(); _rawSeeso.thread.release(); _rawSeeso.thread = null; }
+        if (_rawSeeso?.debugThread) { _rawSeeso.debugThread.stop(); _rawSeeso.debugThread.release(); _rawSeeso.debugThread = null; }
+    } catch (e) { logW('restart', `Stop thread: ${e.message}`); }
+
+    // ── 2. 카메라 트랙 해제 ──
+    try {
+        if (_rawSeeso?.track) { _rawSeeso.track.stop(); _rawSeeso.track = null; }
+        if (_rawSeeso?.imageCapture) { _rawSeeso.imageCapture = null; }
+    } catch (_) { }
+
+    // ── 3. 콜백 제거 ──
+    try {
+        _seeso?.removeGazeCallback?.(onGazeWrapped);
+        _seeso?.removeDebugCallback?.(onDebug);
+    } catch (_) { }
+
+    // ── 4. SDK deinitialize (내부 1초 setTimeout으로 WASM 정리) ──
+    try { _seeso?.deinitialize?.(); } catch (_) { }
+
+    // ── 5. 카메라 스트림 해제 ──
+    if (_mediaStream) {
+        _mediaStream.getTracks().forEach(t => t.stop());
+        _mediaStream = null;
+    }
+
+    // ── 6. 2초 대기 (SDK 내부 1초 + GC 마진) ──
+    await new Promise(r => setTimeout(r, 2000));
+
+    // ── 7. 싱글턴 + 참조 완전 해제 ──
+    try {
+        if (_rawSeeso?.constructor?.gaze) _rawSeeso.constructor.gaze = null;
+        if (_rawSeeso) {
+            _rawSeeso.initialized = false;
+            _rawSeeso.trackerModule = null;
+            _rawSeeso.eyeTracker = null;
+            _rawSeeso.imagePtr = null;
+        }
+    } catch (_) { }
+    _seeso = null;
+    _rawSeeso = null;
+
+    logI('restart', 'Old SDK released. Reinitializing...');
+
+    // ── 8. 카메라 재획득 ──
+    const camOk = await ensureCamera();
+    if (!camOk) {
+        logE('restart', 'Camera re-acquisition FAILED');
+        _isRestarting = false;
+        return;
+    }
+
+    // ── 9. SDK 재초기화 ──
+    const sdkOk = await initSDK();
+    if (!sdkOk) {
+        logE('restart', 'SDK re-init FAILED');
+        _isRestarting = false;
+        return;
+    }
+
+    // ── 10. 트래킹 재시작 ──
+    _seeso.addGazeCallback(onGazeWrapped);
+    _seeso.addDebugCallback(onDebug);
+    const trackOk = _seeso.startTracking(_mediaStream);
+    if (!trackOk) {
+        logE('restart', 'Tracking restart FAILED');
+        _isRestarting = false;
+        return;
+    }
+    _trackingActive = true;
+    setPill(els.pillTrack, 'Track: running', 'ok');
+
+    // ── 11. 패치 재적용 ──
+    setTimeout(() => patchGrabFrameAsImageData(_rawSeeso), 300);
+
+    // ── 12. 캘리브레이션 복원 (localStorage에서) ──
+    setTimeout(async () => {
+        try {
+            const saved = localStorage.getItem('eyetrack_cal_data');
+            if (saved) {
+                const calData = JSON.parse(saved);
+                await _seeso.setCalibrationData(calData);
+                logI('restart', '✅ Calibration restored from localStorage');
+                setPill(els.pillCal, 'Cal: restored', 'ok');
+                setStatus('Eye tracking active (auto-restarted)');
+            } else {
+                logW('restart', 'No saved calibration — user needs to recalibrate');
+                setStatus('Restart complete. Calibration needed.');
+                startCalibration();
+            }
+        } catch (e) {
+            logW('restart', `Calibration restore error: ${e.message}`);
+            startCalibration();
+        }
+    }, 800);
+
+    logI('restart', `═══ Restart #${_restartCount} complete ═══`);
+    _isRestarting = false;
+
+    // ── 다음 재시작 예약 ──
+    scheduleRestart();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // §15. Boot Sequence
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -758,6 +898,12 @@ async function boot() {
         const calOk = startCalibration();
         if (!calOk) setStatus('⚠️ Calibration failed to start.');
     }, 1000);
+
+    // Step 5: [iOS] Schedule periodic restart for memory cleanup
+    if (IS_IOS || IS_SAFARI) {
+        scheduleRestart();
+        logI('boot', `[iOS] Periodic restart enabled: every ${CONFIG.RESTART_INTERVAL_MS / 1000}s`);
+    }
 }
 
 // Start button handler
