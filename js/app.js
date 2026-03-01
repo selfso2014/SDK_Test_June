@@ -118,18 +118,12 @@ const els = {
     debugPanel: $('debugPanel'),
 };
 
-// COI indicator — Safari/iOS does not support COOP/COEP via ServiceWorker
+// COI indicator
 if (els.pillCoi) {
-    if (window.crossOriginIsolated) {
-        els.pillCoi.textContent = 'COI: on';
-        els.pillCoi.dataset.state = 'ok';
-    } else if (IS_SAFARI || IS_IOS) {
-        els.pillCoi.textContent = 'COI: n/a';
-        els.pillCoi.dataset.state = 'warn';
-        logW('coi', 'Safari/iOS: COOP/COEP not available via SW — SDK will use fallback mode');
-    } else {
-        els.pillCoi.textContent = 'COI: off';
-        els.pillCoi.dataset.state = 'warn';
+    els.pillCoi.textContent = `COI: ${window.crossOriginIsolated ? 'on' : 'off'}`;
+    els.pillCoi.dataset.state = window.crossOriginIsolated ? 'ok' : 'warn';
+    if (!window.crossOriginIsolated) {
+        logW('coi', 'crossOriginIsolated is OFF — SDK may fail. SW should fix this on reload.');
     }
 }
 

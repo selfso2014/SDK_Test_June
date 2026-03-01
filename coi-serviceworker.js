@@ -1,69 +1,66 @@
-/*! coi-service-worker v0.1.7 - Guido Zuidhof, licensed under MIT */
-/*  PATCHED: Safari/iOS infinite reload loop prevention */
-if (typeof window === 'undefined') {
-    // ── Service Worker context ──
-    self.addEventListener("install", () => self.skipWaiting());
-    self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
-    self.addEventListener("message", (ev) => {
-        if (ev.data && ev.data.type === "deregister") {
-            self.registration.unregister().then(() => {
-                return self.clients.matchAll();
-            }).then(clients => {
-                clients.forEach(client => client.navigate(client.url));
+/* coi-serviceworker.js
+ *
+ * Enables Cross-Origin Isolation (COOP/COEP) on static hosting (e.g., GitHub Pages)
+ * by injecting the required headers via a Service Worker.
+ *
+ * - Document must be reloaded once after the SW takes control.
+ * - Required because Eyedid(SeeSo) Web SDK uses SharedArrayBuffer (Wasm threads).
+ */
+(() => {
+    // If we're in a window context, register the service worker.
+    if (typeof window !== "undefined") {
+        if (!("serviceWorker" in navigator)) return;
+
+        // If already isolated, nothing to do.
+        if (window.crossOriginIsolated) return;
+
+        // Register this very file as the service worker.
+        navigator.serviceWorker
+            .register("./coi-serviceworker.js", { scope: "./" })
+            .then(() => {
+                // If there is no controller yet, the SW hasn't taken control of this page.
+                // Reload once so the controlled navigation includes COOP/COEP headers.
+                if (!navigator.serviceWorker.controller) {
+                    window.location.reload();
+                }
+            })
+            .catch((err) => {
+                console.warn("COI service worker registration failed:", err);
             });
-        }
+
+        return;
+    }
+
+    // Otherwise, we're in the Service Worker global scope.
+    self.addEventListener("install", (event) => {
+        self.skipWaiting();
     });
-    self.addEventListener("fetch", function (e) {
-        if (e.request.cache === "only-if-cached" && e.request.mode !== "same-origin") return;
-        e.respondWith(
-            fetch(e.request).then(response => {
-                if (response.status === 0) return response;
-                const newHeaders = new Headers(response.headers);
-                newHeaders.set("Cross-Origin-Embedder-Policy", "credentialless");
-                newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
+
+    self.addEventListener("activate", (event) => {
+        event.waitUntil(self.clients.claim());
+    });
+
+    // Add COOP/COEP headers to all same-origin responses.
+    self.addEventListener("fetch", (event) => {
+        const request = event.request;
+
+        event.respondWith(
+            fetch(request).then((response) => {
+                // If response is opaque, we can't read/modify headers.
+                if (!response || response.type === "opaque") return response;
+
+                const headers = new Headers(response.headers);
+
+                // Required to enable `crossOriginIsolated` and SharedArrayBuffer.
+                headers.set("Cross-Origin-Opener-Policy", "same-origin");
+                headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+
                 return new Response(response.body, {
                     status: response.status,
                     statusText: response.statusText,
-                    headers: newHeaders
+                    headers,
                 });
-            }).catch(e => console.error(e))
+            })
         );
     });
-} else {
-    // ── Window context ──
-    (async () => {
-        // Already isolated — nothing to do
-        if (window.crossOriginIsolated !== false) return;
-
-        // ╔════════════════════════════════════════════════════════════════════╗
-        // ║  [PATCH] Safari/iOS does NOT support COOP/COEP via ServiceWorker ║
-        // ║  Attempting to register + reload creates an infinite loop.       ║
-        // ║  Solution: Skip entirely on Safari/iOS.                          ║
-        // ╚════════════════════════════════════════════════════════════════════╝
-        const IS_SAFARI = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-        const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-        if (IS_SAFARI || IS_IOS) {
-            console.warn('[COI] Safari/iOS detected — skipping COOP/COEP ServiceWorker (not supported). SharedArrayBuffer may be unavailable.');
-            return;
-        }
-
-        // ── Prevent infinite reload: only attempt once per session ──
-        const COI_RELOAD_KEY = '__coi_reloaded__';
-        if (sessionStorage.getItem(COI_RELOAD_KEY) === '1') {
-            console.warn('[COI] Already reloaded once for COOP/COEP — stopping to prevent loop.');
-            return;
-        }
-
-        const registration = await navigator.serviceWorker
-            .register(window.document.currentScript.src)
-            .catch(e => console.error("COOP/COEP Service Worker failed:", e));
-
-        if (registration) {
-            console.log("COOP/COEP Service Worker registered, reloading...");
-            sessionStorage.setItem(COI_RELOAD_KEY, '1');
-            setTimeout(() => window.location.reload(), 500);
-        }
-    })();
-}
+})();
