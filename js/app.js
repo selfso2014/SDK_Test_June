@@ -5,11 +5,10 @@ import { loadWebpackModule } from "./webpack-loader.js";
 // ═══════════════════════════════════════════════════════════════════════════════
 // §1. Configuration
 // ═══════════════════════════════════════════════════════════════════════════════
-// License keys — will try in order until one succeeds
-const LICENSE_KEYS = [
-    "dev_1ntzip9admm6g0upynw3gooycnecx0vl93hz8nox",
-    "prod_srdpyuuaumnsqoyk2pvdci0rg3ahsr923bshp32u",
-];
+// Direct key selection — no fallback loop to prevent SDK singleton state poisoning on Safari
+const LICENSE_KEY = window.location.hostname === "selfso2014.github.io"
+    ? "prod_srdpyuuaumnsqoyk2pvdci0rg3ahsr923bshp32u"
+    : "dev_1ntzip9admm6g0upynw3gooycnecx0vl93hz8nox";
 
 const INIT_ERROR_NAMES = {
     0: 'SUCCESS',
@@ -445,54 +444,31 @@ async function initSDK() {
 
         logI('sdk', `Module loaded. Keys: ${Object.keys(_SDK || {}).join(', ')}`);
         logI('sdk', `Domain: ${window.location.hostname}`);
+        logI('sdk', `Key: ${LICENSE_KEY.substring(0, 8)}...`);
         setPill(els.pillSdk, 'SDK: loaded', 'warn');
 
-        // ╔════════════════════════════════════════════════════════════════╗
-        // ║  Try each license key in order until one succeeds             ║
-        // ╚════════════════════════════════════════════════════════════════╝
-        let lastErr = -1;
-        for (let i = 0; i < LICENSE_KEYS.length; i++) {
-            const key = LICENSE_KEYS[i];
-            const keyLabel = key.substring(0, 8) + '...';
-            setStatus(`Trying license key ${i + 1}/${LICENSE_KEYS.length}...`);
-            logI('sdk', `Attempting key ${i + 1}/${LICENSE_KEYS.length}: ${keyLabel}`);
+        _seeso = new SeesoClass();
+        _rawSeeso = _seeso;
+        window.__seeso = _seeso;
 
-            // Create fresh instance for each attempt (singleton reset)
-            _seeso = new SeesoClass();
-            _rawSeeso = _seeso;
-            window.__seeso = _seeso;
+        setStatus('Initializing SDK...');
 
-            try {
-                // UserStatusOption required by SeeSo SDK v2.5.2
-                const userStatusOption = _SDK?.UserStatusOption
-                    ? new _SDK.UserStatusOption(true, true, true)
-                    : { useAttention: true, useBlink: true, useDrowsiness: true };
+        // UserStatusOption required by SeeSo SDK v2.5.2
+        const userStatusOption = _SDK?.UserStatusOption
+            ? new _SDK.UserStatusOption(true, true, true)
+            : { useAttention: true, useBlink: true, useDrowsiness: true };
 
-                const errCode = await _seeso.initialize(key, userStatusOption);
-                const errName = INIT_ERROR_NAMES[errCode] || `UNKNOWN_${errCode}`;
-                logI('sdk', `Key ${keyLabel} → ${errName} (code ${errCode})`);
+        const errCode = await _seeso.initialize(LICENSE_KEY, userStatusOption);
+        const errName = INIT_ERROR_NAMES[errCode] || `UNKNOWN_${errCode}`;
+        logI('sdk', `initialize() → ${errName} (code ${errCode})`);
 
-                if (errCode === 0) {
-                    setPill(els.pillSdk, 'SDK: ready', 'ok');
-                    logI('sdk', `✅ SDK initialized with key ${keyLabel}`);
-                    return true;
-                }
-
-                lastErr = errCode;
-                logW('sdk', `Key ${keyLabel} failed: ${errName}`);
-
-                // Clean up failed instance for next attempt
-                try { _seeso.deinitialize?.(); } catch (_) { }
-                await new Promise(r => setTimeout(r, 500));
-            } catch (e) {
-                logW('sdk', `Key ${keyLabel} threw: ${e.message}`);
-                lastErr = -1;
-            }
+        if (errCode !== 0) {
+            throw new Error(`${errName} (code ${errCode})`);
         }
 
-        // All keys failed
-        const finalErr = INIT_ERROR_NAMES[lastErr] || `UNKNOWN_${lastErr}`;
-        throw new Error(`All ${LICENSE_KEYS.length} keys failed. Last: ${finalErr} (code ${lastErr})`);
+        setPill(els.pillSdk, 'SDK: ready', 'ok');
+        logI('sdk', '✅ SDK initialized successfully');
+        return true;
 
     } catch (e) {
         setPill(els.pillSdk, 'SDK: error', 'error');
@@ -752,15 +728,20 @@ async function boot() {
 
     resizeCanvas();
 
-    // Step 1: SDK Init
-    setStatus('Initializing SDK...');
-    const sdkOk = await initSDK();
-    if (!sdkOk) return;
+    // ╔════════════════════════════════════════════════════════════════╗
+    // ║  [CRITICAL] Camera FIRST, then SDK — matches TheBookWardens  ║
+    // ║  Safari/iOS may require active media context before SDK init ║
+    // ╚════════════════════════════════════════════════════════════════╝
 
-    // Step 2: Camera
+    // Step 1: Camera (must be first on iOS)
     setStatus('Requesting camera...');
     const camOk = await ensureCamera();
     if (!camOk) return;
+
+    // Step 2: SDK Init (after camera is ready)
+    setStatus('Initializing SDK...');
+    const sdkOk = await initSDK();
+    if (!sdkOk) return;
 
     // Step 3: Start Tracking (+ apply patch)
     setStatus('Starting eye tracking...');
