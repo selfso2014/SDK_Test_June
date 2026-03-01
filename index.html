@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="SeeSo Eye Tracking Demo with iOS crash prevention — GPU memory leak fix, Canvas backing store optimization">
+  <title>SeeSo Eye Tracking — iOS Safe</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Cross-Origin Isolation for WASM Threads -->
+  <script src="coi-serviceworker.js"></script>
+</head>
+<body>
+
+  <!-- ═══ Fullscreen Gaze Canvas ═══ -->
+  <canvas id="gazeCanvas"></canvas>
+
+  <!-- ═══ Start Screen ═══ -->
+  <div id="startScreen">
+    <h1>👁️ SeeSo Eye Tracking</h1>
+    <p>
+      iOS crash-safe eye tracking powered by SeeSo SDK v2.5.2.<br>
+      Canvas backing store leak patched. GPU memory pinned.
+    </p>
+    <button id="btnStart">Start Eye Tracking</button>
+    <p style="font-size:11px; margin-top:12px; opacity:0.4;">
+      Camera permission required. All processing is on-device.
+    </p>
+  </div>
+
+  <!-- ═══ HUD ═══ -->
+  <div id="hud">
+    <div id="statusText">Ready</div>
+    <div class="pill-row">
+      <span class="pill" id="pillCoi">COI: -</span>
+      <span class="pill" id="pillCam">Cam: -</span>
+      <span class="pill" id="pillSdk">SDK: -</span>
+      <span class="pill" id="pillTrack">Track: -</span>
+      <span class="pill" id="pillCal">Cal: -</span>
+    </div>
+  </div>
+
+  <!-- ═══ Gaze Info (top-right) ═══ -->
+  <div id="gazeInfo">Gaze: -</div>
+
+  <!-- ═══ Calibration Overlay ═══ -->
+  <div id="calOverlay">
+    <p id="calInstruction">Look at the glowing dot and keep your head still.</p>
+    <div id="calDot"></div>
+    <div id="calProgress">0%</div>
+  </div>
+
+  <!-- ═══ Memory Monitor (bottom-left) ═══ -->
+  <div id="memMonitor">Heap: N/A</div>
+
+  <!-- ═══ Debug Panel (bottom-right) ═══ -->
+  <div id="debugToggle">🐞</div>
+  <pre id="debugPanel"></pre>
+  <div id="debugToolbar">
+    <button class="dbg-btn" id="btnCopyLogs">📋 Copy</button>
+  </div>
+
+  <!-- Hidden video for camera preview (optional) -->
+  <video id="preview" playsinline autoplay muted
+    style="position:fixed;width:1px;height:1px;top:0;left:0;opacity:0;pointer-events:none;z-index:-1;">
+  </video>
+
+  <!-- ═══ App Script ═══ -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
