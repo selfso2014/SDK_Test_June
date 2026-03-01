@@ -276,16 +276,53 @@ __webpack_require__.r(__webpack_exports__);
               }
               _this2.videoElementPlaying.then(function () {
                 try {
-                  var _this2$canvas2dContex, _this2$canvas2dContex2;
-                  var _giW = _this2.videoElement.videoWidth;
-                  var _giH = _this2.videoElement.videoHeight;
-                  if (_this2._lastW !== _giW || _this2._lastH !== _giH) { _this2.canvasElement.width = _giW; _this2.canvasElement.height = _giH; _this2._lastW = _giW; _this2._lastH = _giH; _this2.canvas2dContext = _this2.canvasElement.getContext('2d', { willReadFrequently: true }); }
-                  (_this2$canvas2dContex = _this2.canvas2dContext) === null || _this2$canvas2dContex === void 0 || _this2$canvas2dContex.drawImage(_this2.videoElement, 0, 0);
-                  var imageData = (_this2$canvas2dContex2 = _this2.canvas2dContext) === null || _this2$canvas2dContex2 === void 0 ? void 0 : _this2$canvas2dContex2.getImageData(0, 0, _this2.canvasElement.width, _this2.canvasElement.height);
-                  if (imageData) {
-                    resolve(imageData);
+                  var w = _this2.videoElement.videoWidth;
+                  var h = _this2.videoElement.videoHeight;
+                  if (!w || !h) { reject(new DOMException('UnknownError')); return; }
+                  // ── WebGL zero-allocation path (iOS crash fix) ──
+                  if (!_this2._glReady || _this2._glW !== w || _this2._glH !== h) {
+                    try {
+                      var c = document.createElement('canvas'); c.width = w; c.height = h;
+                      var gl = c.getContext('webgl', { antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true });
+                      if (gl) {
+                        var tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                        var fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+                        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+                        var pixBuf = new Uint8Array(w * h * 4);
+                        var flipped = new Uint8ClampedArray(w * h * 4);
+                        _this2._gl = gl; _this2._glTex = tex; _this2._glFb = fb;
+                        _this2._glPixBuf = pixBuf; _this2._glFlipped = flipped;
+                        _this2._glImgData = new ImageData(flipped, w, h);
+                        _this2._glW = w; _this2._glH = h; _this2._glReady = true;
+                      }
+                    } catch (e) { _this2._glReady = false; }
+                  }
+                  if (_this2._glReady) {
+                    var gl = _this2._gl;
+                    gl.bindTexture(gl.TEXTURE_2D, _this2._glTex);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, _this2.videoElement);
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, _this2._glFb);
+                    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, _this2._glPixBuf);
+                    var rowBytes = w * 4; var src = _this2._glPixBuf; var dst = _this2._glFlipped;
+                    for (var y = 0; y < h; y++) {
+                      var srcOff = (h - 1 - y) * rowBytes; var dstOff = y * rowBytes;
+                      dst.set(src.subarray(srcOff, srcOff + rowBytes), dstOff);
+                    }
+                    resolve(_this2._glImgData);
                   } else {
-                    reject(new DOMException('UnknownError'));
+                    // ── Fallback: 2d canvas (non-iOS or WebGL unavailable) ──
+                    var _giW = w; var _giH = h;
+                    if (_this2._lastW !== _giW || _this2._lastH !== _giH) {
+                      _this2.canvasElement.width = _giW; _this2.canvasElement.height = _giH;
+                      _this2._lastW = _giW; _this2._lastH = _giH;
+                      _this2.canvas2dContext = _this2.canvasElement.getContext('2d', { willReadFrequently: true });
+                    }
+                    _this2.canvas2dContext.drawImage(_this2.videoElement, 0, 0);
+                    resolve(_this2.canvas2dContext.getImageData(0, 0, _giW, _giH));
                   }
                 } catch (error) {
                   reject(new DOMException('UnknownError'));
@@ -8185,10 +8222,10 @@ __webpack_require__.r(__webpack_exports__);
       /* UAParser.js v2.0.0-beta.2
          Copyright © 2012-2023 Faisal Salman <f@faisalman.com>
          AGPLv3 License */ /*
-                     Detect Browser, Engine, OS, CPU, and Device type/model from User-Agent data.
-                     Supports browser & node.js environment. 
-                     Demo   : https://faisalman.github.io/ua-parser-js
-                     Source : https://github.com/faisalman/ua-parser-js */
+               Detect Browser, Engine, OS, CPU, and Device type/model from User-Agent data.
+               Supports browser & node.js environment. 
+               Demo   : https://faisalman.github.io/ua-parser-js
+               Source : https://github.com/faisalman/ua-parser-js */
       /////////////////////////////////////////////////////////////////////////////////
 
       /* jshint esversion: 6 */
@@ -11191,6 +11228,7 @@ var __nested_webpack_exports__ = {};
                 ptr = this.getBufferPtr_(bitmap);
                 this.trackerModule.HEAPU8.set(bitmap.data, ptr);
                 isAdd = this.trackerModule.ccall('addFrame', 'boolean', ['number', 'number', 'number', 'number', 'number', 'number'], [this.eyeTracker, ptr, bitmap.width, bitmap.height, _type_color_format__WEBPACK_IMPORTED_MODULE_5__.ColorFormat.RGBA, Date.now()]);
+                bitmap = null; // iOS: explicit release to aid GC
               case 6:
               case "end":
                 return _context15.stop();
